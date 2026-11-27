@@ -15,19 +15,59 @@ import ru.rsreu.ryabinin0513.config.Config;
 
 import java.io.IOException;
 
-public class ElasticsearchClientFactory {
+/**
+ * Фабрика для создания клиентов Elasticsearch.
+ *
+ * <p>Собирает цепочку объектов {@link RestClient} → {@link ElasticsearchTransport}
+ * → {@link ElasticsearchClient} и управляет их освобождением.</p>
+ */
+public final class ElasticsearchClientFactory {
 
-    public static class EsClients implements AutoCloseable {
-        public final ElasticsearchClient client;
+    /**
+     * Приватный конструктор предотвращает создание экземпляров класса.
+     */
+    private ElasticsearchClientFactory() {
+    }
+
+    /**
+     * Набор связанных клиентов Elasticsearch, которые необходимо закрыть
+     * после завершения работы.
+     */
+    public static final class ElasticsearchClients implements AutoCloseable {
+
+        private final ElasticsearchClient client;
         private final ElasticsearchTransport transport;
         private final RestClient restClient;
 
-        EsClients(ElasticsearchClient client, ElasticsearchTransport transport, RestClient restClient) {
+        /**
+         * Создаёт набор клиентов Elasticsearch.
+         *
+         * @param client     типизированный клиент Elasticsearch
+         * @param transport  транспорт для сериализации запросов
+         * @param restClient низкоуровневый HTTP-клиент
+         */
+        private ElasticsearchClients(ElasticsearchClient client,
+                                     ElasticsearchTransport transport,
+                                     RestClient restClient) {
             this.client = client;
             this.transport = transport;
             this.restClient = restClient;
         }
 
+        /**
+         * Возвращает типизированный клиент Elasticsearch.
+         *
+         * @return клиент Elasticsearch
+         */
+        public ElasticsearchClient getClient() {
+            return client;
+        }
+
+        /**
+         * Закрывает транспорт и низкоуровневый HTTP-клиент.
+         *
+         * @throws IOException если при закрытии возникла ошибка ввода-вывода
+         */
         @Override
         public void close() throws IOException {
             try {
@@ -38,14 +78,41 @@ public class ElasticsearchClientFactory {
         }
     }
 
-    public static EsClients createClients() {
+    /**
+     * Создаёт набор клиентов Elasticsearch с параметрами из конфигурации.
+     *
+     * @return набор связанных клиентов Elasticsearch
+     */
+    public static ElasticsearchClients createElasticsearchClients() {
+        CredentialsProvider credentialsProvider = createCredentialsProvider();
+        RestClient restClient = createRestClient(credentialsProvider);
+        ElasticsearchTransport transport = createTransport(restClient);
+        ElasticsearchClient client = new ElasticsearchClient(transport);
 
-        final CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+        return new ElasticsearchClients(client, transport, restClient);
+    }
+
+    /**
+     * Создаёт провайдер учётных данных для подключения к Elasticsearch.
+     *
+     * @return провайдер учётных данных
+     */
+    private static CredentialsProvider createCredentialsProvider() {
+        CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
         credentialsProvider.setCredentials(
                 AuthScope.ANY,
                 new UsernamePasswordCredentials(Config.ELASTIC_USER, Config.ELASTIC_PASSWORD)
         );
+        return credentialsProvider;
+    }
 
+    /**
+     * Создаёт низкоуровневый HTTP-клиент Elasticsearch.
+     *
+     * @param credentialsProvider провайдер учётных данных
+     * @return настроенный HTTP-клиент
+     */
+    private static RestClient createRestClient(CredentialsProvider credentialsProvider) {
         RestClientBuilder builder = RestClient.builder(
                 new HttpHost(Config.ELASTIC_HOST, Config.ELASTIC_PORT, Config.ELASTIC_SCHEME)
         );
@@ -54,14 +121,16 @@ public class ElasticsearchClientFactory {
                 httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider)
         );
 
-        RestClient restClient = builder.build();
+        return builder.build();
+    }
 
-        ElasticsearchTransport transport = new RestClientTransport(
-                restClient, new JacksonJsonpMapper()
-        );
-
-        ElasticsearchClient client = new ElasticsearchClient(transport);
-
-        return new EsClients(client, transport, restClient);
+    /**
+     * Создаёт транспорт, преобразующий Java-объекты в JSON и обратно.
+     *
+     * @param restClient низкоуровневый HTTP-клиент
+     * @return транспорт Elasticsearch
+     */
+    private static ElasticsearchTransport createTransport(RestClient restClient) {
+        return new RestClientTransport(restClient, new JacksonJsonpMapper());
     }
 }

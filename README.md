@@ -27,6 +27,7 @@
 src/main/java/ru/rsreu/ryabinin0513/
 ├── Main.java
 ├── config/Config.java
+├── constant/TextConstants.java
 ├── elastic/
 │   ├── AggregationService.java
 │   ├── CsvLoader.java

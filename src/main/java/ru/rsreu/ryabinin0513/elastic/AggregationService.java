@@ -7,58 +7,161 @@ import co.elastic.clients.elasticsearch.core.SearchRequest;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.json.JsonpUtils;
 import co.elastic.clients.json.jackson.JacksonJsonpMapper;
+import ru.rsreu.ryabinin0513.constant.TextConstants;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
-public class AggregationService {
+/**
+ * Выполняет агрегацию редких терминов с помощью {@code rare_terms}
+ * и выводит результат в таблицу.
+ */
+public final class AggregationService {
 
-    public static void rareTermsByField(ElasticsearchClient client,
-                                        String field,
-                                        long maxDocCount) throws IOException {
-        String aggregationName = "by_".concat(field);
-        System.out.println("\nАГРЕГАЦИЯ РЕДКИХ ТЕРМОВ (rare_terms)");
-        System.out.println("Поле: " + field + " | max_doc_count: " + maxDocCount);
+    /**
+     * Приватный конструктор предотвращает создание экземпляров класса.
+     */
+    private AggregationService() {
+    }
 
-        SearchRequest request = SearchRequest.of(s -> s
-                .index(IndexCreator.INDEX_NAME)
-                .size(0)
-                .aggregations(aggregationName, a -> a
-                        .rareTerms(r -> r
-                                .field(field)
-                                .maxDocCount(maxDocCount)
-                        )
-                )
-        );
+    /**
+     * Агрегирует документы по указанному полю и возвращает редкие термины.
+     *
+     * @param client           клиент Elasticsearch
+     * @param fieldName        имя поля для агрегации
+     * @param maxDocumentCount максимальное количество документов, при котором
+     *                         термин считается редким
+     * @throws IOException если при выполнении агрегации возникла ошибка
+     */
+    public static void aggregateRareTermsByField(ElasticsearchClient client,
+                                                 String fieldName,
+                                                 long maxDocumentCount) throws IOException {
+        SearchRequest request = buildRareTermsSearchRequest(fieldName, maxDocumentCount);
 
-        String requestJson = JsonpUtils.toJsonString(request, new JacksonJsonpMapper());
-        System.out.println("Запрос: " + requestJson);
+        printAggregationParameters(fieldName, maxDocumentCount, request);
 
         SearchResponse<Map> response = client.search(request, Map.class);
 
-        Aggregate agg = response.aggregations().get(aggregationName);
+        printAggregationResponse(response, fieldName);
+    }
 
-        if (agg == null) {
-            System.out.println("Редких термов не найдено.");
+    /**
+     * Формирует запрос агрегации {@code rare_terms}.
+     *
+     * @param fieldName        имя поля для агрегации
+     * @param maxDocumentCount максимальное количество документов для редкого термина
+     * @return поисковый запрос с агрегацией
+     */
+    private static SearchRequest buildRareTermsSearchRequest(String fieldName,
+                                                             long maxDocumentCount) {
+        String aggregationName = buildAggregationName(fieldName);
+
+        return SearchRequest.of(request -> request
+                .index(IndexCreator.INDEX_NAME)
+                .size(0)
+                .aggregations(aggregationName, aggregation -> aggregation
+                        .rareTerms(rareTerms -> rareTerms
+                                .field(fieldName)
+                                .maxDocCount(maxDocumentCount)
+                        )
+                )
+        );
+    }
+
+    /**
+     * Формирует имя агрегации по имени поля.
+     *
+     * @param fieldName имя поля
+     * @return имя агрегации
+     */
+    private static String buildAggregationName(String fieldName) {
+        return TextConstants.AGGREGATION_NAME_PREFIX + fieldName;
+    }
+
+    /**
+     * Выводит параметры агрегации и тело запроса в формате JSON.
+     *
+     * @param fieldName        имя поля для агрегации
+     * @param maxDocumentCount максимальное количество документов для редкого термина
+     * @param request          запрос с агрегацией
+     */
+    private static void printAggregationParameters(String fieldName,
+                                                   long maxDocumentCount,
+                                                   SearchRequest request) {
+        System.out.println(TextConstants.MESSAGE_AGGREGATION_TITLE);
+        System.out.printf(
+                TextConstants.MESSAGE_AGGREGATION_PARAMETERS + TextConstants.FORMAT_LINE_END,
+                fieldName,
+                maxDocumentCount
+        );
+
+        String requestJson = JsonpUtils.toJsonString(request, new JacksonJsonpMapper());
+        System.out.printf(
+                TextConstants.MESSAGE_REQUEST_BODY + TextConstants.FORMAT_LINE_END,
+                requestJson
+        );
+    }
+
+    /**
+     * Выводит результат агрегации или сообщение об отсутствии редких терминов.
+     *
+     * @param response  ответ Elasticsearch на запрос агрегации
+     * @param fieldName имя поля агрегации
+     */
+    private static void printAggregationResponse(SearchResponse<Map> response, String fieldName) {
+        String aggregationName = buildAggregationName(fieldName);
+        Aggregate aggregate = response.aggregations().get(aggregationName);
+
+        boolean isAggregateMissing = aggregate == null;
+
+        if (isAggregateMissing) {
+            printAggregationNotFound();
             return;
         }
 
-        List<StringRareTermsBucket> buckets = agg.srareterms().buckets().array();
+        List<StringRareTermsBucket> buckets = aggregate.srareterms().buckets().array();
 
-        if (buckets.isEmpty()) {
-            System.out.println("Редких термов не найдено.");
+        boolean isBucketsEmpty = buckets.isEmpty();
+
+        if (isBucketsEmpty) {
+            printAggregationNotFound();
             return;
         }
 
-        System.out.println("Найдено редких термов: " + buckets.size());
-        System.out.println("-".repeat(60));
-        System.out.printf("%-30s | %-15s%n", field, "Кол-во документов");
-        System.out.println("-".repeat(60));
+        System.out.printf(
+                TextConstants.MESSAGE_AGGREGATION_TERMS_FOUND + TextConstants.FORMAT_LINE_END,
+                buckets.size()
+        );
+
+        printAggregationTable(fieldName, buckets);
+    }
+
+    /**
+     * Выводит сообщение об отсутствии редких терминов.
+     */
+    private static void printAggregationNotFound() {
+        System.out.println(TextConstants.MESSAGE_AGGREGATION_NOTHING_FOUND);
+    }
+
+    /**
+     * Выводит таблицу редких терминов.
+     *
+     * @param fieldName имя поля агрегации
+     * @param buckets   найденные редкие термины
+     */
+    private static void printAggregationTable(String fieldName,
+                                              List<StringRareTermsBucket> buckets) {
+        System.out.println(TextConstants.TABLE_SEPARATOR_AGGREGATION);
+        System.out.printf(TextConstants.AGGREGATION_TABLE_HEADER_FORMAT,
+                fieldName, TextConstants.AGGREGATION_COUNT_HEADER);
+        System.out.println(TextConstants.TABLE_SEPARATOR_AGGREGATION);
 
         for (StringRareTermsBucket bucket : buckets) {
-            System.out.printf("%-30s | %-15d%n", bucket.key(), bucket.docCount());
+            System.out.printf(TextConstants.AGGREGATION_TABLE_ROW_FORMAT,
+                    bucket.key(), bucket.docCount());
         }
-        System.out.println("-".repeat(60));
+
+        System.out.println(TextConstants.TABLE_SEPARATOR_AGGREGATION);
     }
 }
